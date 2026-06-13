@@ -5,10 +5,10 @@ rules live in `.claude/rules/` and are imported below.
 
 ## Project conventions
 
-- @.claude/rules/code-style.md
-- @.claude/rules/git-workflow.md
-- @.claude/rules/testing.md
-- @.claude/rules/security.md
+- @rules/code-style.md
+- @rules/git-workflow.md
+- @rules/testing.md
+- @rules/security.md
 
 ## Notes for Claude
 
