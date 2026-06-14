@@ -1,0 +1,20 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+
+# local data cache & databases
+.cache/
+data/cache/
+*.db
+*.sqlite3
+
+# streamlit
+.streamlit/secrets.toml
+
+# editor/OS
+.DS_Store
