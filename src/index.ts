@@ -302,7 +302,9 @@ async function callTool(
   name: string,
   args: Record<string, unknown>,
 ): Promise<unknown> {
-  const apiKey = (args._apiKey as string | undefined)?.trim();
+  const apiKey =
+    (args._apiKey as string | undefined)?.trim() ??
+    process.env.PLATFORM_FMP_KEY?.trim();
   if (!apiKey) {
     throw new Error(
       "FMP requires an API key. Set PLATFORM_FMP_KEY or pass ?_apiKey=… (free at https://site.financialmodelingprep.com/developer/docs).",
