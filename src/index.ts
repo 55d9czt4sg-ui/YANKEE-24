@@ -18,7 +18,6 @@ interface McpToolExport {
 }
 
 const BASE = "https://financialmodelingprep.com/stable";
-const UA = "pipeworx-mcp-fmp/1.0 (+https://pipeworx.io)";
 const passthrough = {
   type: "object" as const,
   properties: {},
@@ -324,7 +323,6 @@ async function callTool(
     const response = await fetch(`${BASE}${path}?${searchParams}`, {
       headers: {
         Accept: "application/json",
-        "User-Agent": UA,
       },
     });
 
@@ -333,11 +331,13 @@ async function callTool(
     }
     if (response.status === 402) {
       throw new Error(
-        "FMP: 402 — this endpoint requires a paid plan. Free tier has changed since Aug 2025; upgrade at https://site.financialmodelingprep.com/pricing-plans.",
+        "FMP: 402 — this endpoint requires a paid plan. See https://site.financialmodelingprep.com/pricing-plans.",
       );
     }
     if (response.status === 429) {
-      throw new Error("FMP: 429 rate limit (free tier 250/day).");
+      throw new Error(
+        "FMP: 429 rate limit. See https://site.financialmodelingprep.com/developer/docs.",
+      );
     }
     if (!response.ok) {
       throw new Error(`FMP: ${response.status}`);

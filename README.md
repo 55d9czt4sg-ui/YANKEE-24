@@ -37,5 +37,6 @@ Financial Modeling Prep MCP pack backed by the stable FMP API.
 
 ```bash
 npm install
+npm test
 npm run typecheck
 ```

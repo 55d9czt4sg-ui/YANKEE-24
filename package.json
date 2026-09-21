@@ -18,6 +18,8 @@
     "url": "https://github.com/pipeworx-io/mcp-fmp"
   },
   "scripts": {
+    "build": "tsc",
+    "test": "npm run build && node --test dist/**/*.test.js",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
