@@ -92,6 +92,32 @@ test("success with an empty body returns null", async () => {
   }
 });
 
+test("whitespace _apiKey falls back to PLATFORM_FMP_KEY", async () => {
+  let requestedUrl = "";
+  const restoreFetch = setFetch(async (input) => {
+    requestedUrl = String(input);
+    return response(200, "[]");
+  });
+  const originalApiKey = process.env.PLATFORM_FMP_KEY;
+  process.env.PLATFORM_FMP_KEY = "env-demo";
+
+  try {
+    await fmp.callTool("quote", { symbol: "AAPL", _apiKey: "   " });
+
+    assert.equal(
+      requestedUrl,
+      "https://financialmodelingprep.com/stable/quote?apikey=env-demo&symbol=AAPL",
+    );
+  } finally {
+    if (originalApiKey === undefined) {
+      delete process.env.PLATFORM_FMP_KEY;
+    } else {
+      process.env.PLATFORM_FMP_KEY = originalApiKey;
+    }
+    restoreFetch();
+  }
+});
+
 test("missing API keys are rejected before any request is sent", async () => {
   await assert.rejects(
     () => fmp.callTool("quote", { symbol: "AAPL" }),
@@ -197,6 +223,21 @@ test("non-json success responses surface a controlled error", async () => {
     await assert.rejects(
       () => fmp.callTool("quote", { symbol: "AAPL", _apiKey: "demo" }),
       /FMP: expected JSON response but received text\/html\./,
+    );
+  } finally {
+    restoreFetch();
+  }
+});
+
+test("json-compatible media types are parsed as JSON", async () => {
+  const restoreFetch = setFetch(async () =>
+    response(200, '{"title":"ok"}', "application/problem+json"),
+  );
+
+  try {
+    assert.deepEqual(
+      await fmp.callTool("quote", { symbol: "AAPL", _apiKey: "demo" }),
+      { title: "ok" },
     );
   } finally {
     restoreFetch();
