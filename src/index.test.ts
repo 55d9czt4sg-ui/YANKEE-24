@@ -6,13 +6,19 @@ import fmp from "./index.js";
 type MockResponse = {
   status: number;
   ok: boolean;
+  headers: Headers;
   text: () => Promise<string>;
 };
 
-function response(status: number, body = ""): MockResponse {
+function response(
+  status: number,
+  body = "",
+  contentType = "application/json",
+): MockResponse {
   return {
     status,
     ok: status >= 200 && status < 300,
+    headers: new Headers(contentType ? { "content-type": contentType } : {}),
     text: async () => body,
   };
 }
@@ -74,7 +80,7 @@ test("intraday encodes interval in the endpoint path", async () => {
 });
 
 test("success with an empty body returns null", async () => {
-  const restoreFetch = setFetch(async () => response(204));
+  const restoreFetch = setFetch(async () => response(204, "", ""));
 
   try {
     assert.equal(
@@ -105,6 +111,29 @@ test("unknown tools list the supported names", async () => {
     () => fmp.callTool("missing_tool", { _apiKey: "demo" }),
     /Available tools: profile, quote, quote_short/,
   );
+});
+
+test("caller-supplied apikey params cannot override the validated API key", async () => {
+  let requestedUrl = "";
+  const restoreFetch = setFetch(async (input) => {
+    requestedUrl = String(input);
+    return response(200, "[]");
+  });
+
+  try {
+    await fmp.callTool("stock_news", {
+      symbols: "AAPL",
+      apikey: "ignored",
+      _apiKey: "demo",
+    });
+
+    assert.equal(
+      requestedUrl,
+      "https://financialmodelingprep.com/stable/news/stock?apikey=demo&symbols=AAPL",
+    );
+  } finally {
+    restoreFetch();
+  }
 });
 
 test("401 responses surface an invalid API key error", async () => {
@@ -153,6 +182,21 @@ test("generic HTTP failures preserve the status code", async () => {
     await assert.rejects(
       () => fmp.callTool("quote", { symbol: "AAPL", _apiKey: "demo" }),
       /FMP: 500/,
+    );
+  } finally {
+    restoreFetch();
+  }
+});
+
+test("non-json success responses surface a controlled error", async () => {
+  const restoreFetch = setFetch(async () =>
+    response(200, "<html>ok</html>", "text/html"),
+  );
+
+  try {
+    await assert.rejects(
+      () => fmp.callTool("quote", { symbol: "AAPL", _apiKey: "demo" }),
+      /FMP: expected JSON response but received text\/html\./,
     );
   } finally {
     restoreFetch();

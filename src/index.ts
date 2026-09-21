@@ -402,11 +402,25 @@ const tools = toolConfigs.map(({ name, description, inputSchema }) => ({
 const toolConfigByName = new Map(toolConfigs.map((tool) => [tool.name, tool]));
 
 async function parseResponse(response: Response): Promise<unknown> {
+  const contentType = response.headers.get("content-type") ?? "";
   const text = await response.text();
   if (!text.trim()) {
     return null;
   }
-  return JSON.parse(text) as unknown;
+
+  if (
+    contentType &&
+    !contentType.includes("application/json") &&
+    !contentType.includes("+json")
+  ) {
+    throw new Error(`FMP: expected JSON response but received ${contentType}.`);
+  }
+
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    throw new Error("FMP: expected a JSON response from upstream.");
+  }
 }
 
 async function callTool(
@@ -433,7 +447,7 @@ async function callTool(
   const params = tool.params?.(args);
   if (params) {
     for (const [key, value] of Object.entries(params)) {
-      if (key !== "_apiKey" && value != null) {
+      if (key !== "_apiKey" && key !== "apikey" && value != null) {
         searchParams.set(key, String(value));
       }
     }
