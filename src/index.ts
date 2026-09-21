@@ -17,6 +17,11 @@ interface McpToolExport {
   provider?: string;
 }
 
+interface ToolConfig extends McpToolDefinition {
+  path: string | ((args: Record<string, unknown>) => string);
+  params?: (args: Record<string, unknown>) => Record<string, unknown>;
+}
+
 const BASE = "https://financialmodelingprep.com/stable";
 const passthrough = {
   type: "object" as const,
@@ -24,7 +29,43 @@ const passthrough = {
   additionalProperties: true,
 };
 
-const tools: McpToolExport["tools"] = [
+const requireString = (
+  args: Record<string, unknown>,
+  key: string,
+  example: string,
+) => {
+  const value = args[key];
+  if (typeof value !== "string") {
+    throw new Error(
+      `Required argument "${key}" is missing. Pass a string like ${example}.`,
+    );
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    throw new Error(
+      `Required argument "${key}" is missing. Pass a string like ${example}.`,
+    );
+  }
+  return trimmed;
+};
+
+const symbolParams = (args: Record<string, unknown>) => ({
+  symbol: requireString(args, "symbol", '"AAPL"'),
+});
+
+const statementParams = (args: Record<string, unknown>) => ({
+  symbol: requireString(args, "symbol", '"AAPL"'),
+  period: args.period,
+  limit: args.limit,
+});
+
+const searchParams = (args: Record<string, unknown>, example: string) => ({
+  query: requireString(args, "query", example),
+  limit: args.limit,
+  exchange: args.exchange,
+});
+
+const toolConfigs: ToolConfig[] = [
   {
     name: "profile",
     description:
@@ -34,6 +75,8 @@ const tools: McpToolExport["tools"] = [
       properties: { symbol: { type: "string" } },
       required: ["symbol"],
     },
+    path: "/profile",
+    params: symbolParams,
   },
   {
     name: "quote",
@@ -44,6 +87,8 @@ const tools: McpToolExport["tools"] = [
       properties: { symbol: { type: "string" } },
       required: ["symbol"],
     },
+    path: "/quote",
+    params: symbolParams,
   },
   {
     name: "quote_short",
@@ -54,6 +99,8 @@ const tools: McpToolExport["tools"] = [
       properties: { symbol: { type: "string" } },
       required: ["symbol"],
     },
+    path: "/quote-short",
+    params: symbolParams,
   },
   {
     name: "historical_price",
@@ -67,6 +114,12 @@ const tools: McpToolExport["tools"] = [
       },
       required: ["symbol"],
     },
+    path: "/historical-price-eod/full",
+    params: (args) => ({
+      symbol: requireString(args, "symbol", '"AAPL"'),
+      from: args.from,
+      to: args.to,
+    }),
   },
   {
     name: "intraday",
@@ -79,6 +132,11 @@ const tools: McpToolExport["tools"] = [
       },
       required: ["symbol", "interval"],
     },
+    path: (args) =>
+      `/historical-chart/${encodeURIComponent(
+        requireString(args, "interval", '"1hour"'),
+      )}`,
+    params: symbolParams,
   },
   {
     name: "income_statement",
@@ -92,6 +150,8 @@ const tools: McpToolExport["tools"] = [
       },
       required: ["symbol"],
     },
+    path: "/income-statement",
+    params: statementParams,
   },
   {
     name: "balance_sheet",
@@ -105,6 +165,8 @@ const tools: McpToolExport["tools"] = [
       },
       required: ["symbol"],
     },
+    path: "/balance-sheet-statement",
+    params: statementParams,
   },
   {
     name: "cash_flow",
@@ -119,6 +181,8 @@ const tools: McpToolExport["tools"] = [
       },
       required: ["symbol"],
     },
+    path: "/cash-flow-statement",
+    params: statementParams,
   },
   {
     name: "ratios",
@@ -132,6 +196,8 @@ const tools: McpToolExport["tools"] = [
       },
       required: ["symbol"],
     },
+    path: "/ratios",
+    params: statementParams,
   },
   {
     name: "enterprise_value",
@@ -145,6 +211,8 @@ const tools: McpToolExport["tools"] = [
       },
       required: ["symbol"],
     },
+    path: "/enterprise-values",
+    params: statementParams,
   },
   {
     name: "key_metrics",
@@ -158,6 +226,8 @@ const tools: McpToolExport["tools"] = [
       },
       required: ["symbol"],
     },
+    path: "/key-metrics",
+    params: statementParams,
   },
   {
     name: "financial_growth",
@@ -171,6 +241,8 @@ const tools: McpToolExport["tools"] = [
       },
       required: ["symbol"],
     },
+    path: "/financial-growth",
+    params: statementParams,
   },
   {
     name: "search_symbol",
@@ -184,6 +256,8 @@ const tools: McpToolExport["tools"] = [
       },
       required: ["query"],
     },
+    path: "/search-symbol",
+    params: (args) => searchParams(args, '"AAPL"'),
   },
   {
     name: "search_name",
@@ -197,11 +271,15 @@ const tools: McpToolExport["tools"] = [
       },
       required: ["query"],
     },
+    path: "/search-name",
+    params: (args) => searchParams(args, '"apple"'),
   },
   {
     name: "stock_screener",
     description: "Stock screener (paid).",
     inputSchema: passthrough,
+    path: "/company-screener",
+    params: (args) => args,
   },
   {
     name: "stock_news",
@@ -214,6 +292,8 @@ const tools: McpToolExport["tools"] = [
         limit: { type: "number" },
       },
     },
+    path: "/news/stock",
+    params: (args) => args,
   },
   {
     name: "earnings_calendar",
@@ -225,6 +305,8 @@ const tools: McpToolExport["tools"] = [
         to: { type: "string" },
       },
     },
+    path: "/earnings-calendar",
+    params: (args) => args,
   },
   {
     name: "economic_calendar",
@@ -236,6 +318,8 @@ const tools: McpToolExport["tools"] = [
         to: { type: "string" },
       },
     },
+    path: "/economic-calendar",
+    params: (args) => args,
   },
   {
     name: "ipos_calendar",
@@ -247,15 +331,19 @@ const tools: McpToolExport["tools"] = [
         to: { type: "string" },
       },
     },
+    path: "/ipos-calendar",
+    params: (args) => args,
   },
   {
     name: "mergers_acquisitions",
     description:
-      "Financial Modeling Prep recent M&A activity feed: announced deals with acquirer, target, value, date. Use for \"who did $TICKER acquire\", \"recent deals in sector X\", deal-flow monitoring.",
+      'Financial Modeling Prep recent M&A activity feed: announced deals with acquirer, target, value, date. Use for "who did $TICKER acquire", "recent deals in sector X", deal-flow monitoring.',
     inputSchema: {
       type: "object",
       properties: { page: { type: "number" } },
     },
+    path: "/mergers-acquisitions-latest",
+    params: (args) => args,
   },
   {
     name: "delisted_companies",
@@ -264,6 +352,8 @@ const tools: McpToolExport["tools"] = [
       type: "object",
       properties: { limit: { type: "number" } },
     },
+    path: "/delisted-companies",
+    params: (args) => args,
   },
   {
     name: "insider_trading",
@@ -276,6 +366,8 @@ const tools: McpToolExport["tools"] = [
         limit: { type: "number" },
       },
     },
+    path: "/insider-trading-search",
+    params: (args) => args,
   },
   {
     name: "institutional_ownership",
@@ -285,6 +377,8 @@ const tools: McpToolExport["tools"] = [
       properties: { symbol: { type: "string" } },
       required: ["symbol"],
     },
+    path: "/institutional-ownership/symbol-ownership",
+    params: symbolParams,
   },
   {
     name: "etf_holdings",
@@ -294,8 +388,26 @@ const tools: McpToolExport["tools"] = [
       properties: { symbol: { type: "string" } },
       required: ["symbol"],
     },
+    path: "/etf/holdings",
+    params: symbolParams,
   },
 ];
+
+const tools = toolConfigs.map(({ name, description, inputSchema }) => ({
+  name,
+  description,
+  inputSchema,
+}));
+
+const toolConfigByName = new Map(toolConfigs.map((tool) => [tool.name, tool]));
+
+async function parseResponse(response: Response): Promise<unknown> {
+  const text = await response.text();
+  if (!text.trim()) {
+    return null;
+  }
+  return JSON.parse(text) as unknown;
+}
 
 async function callTool(
   name: string,
@@ -310,159 +422,46 @@ async function callTool(
     );
   }
 
-  const get = async (path: string, params?: Record<string, unknown>) => {
-    const searchParams = new URLSearchParams({ apikey: apiKey });
-    if (params) {
-      for (const [key, value] of Object.entries(params)) {
-        if (key !== "_apiKey" && value != null) {
-          searchParams.set(key, String(value));
-        }
+  const tool = toolConfigByName.get(name);
+  if (!tool) {
+    throw new Error(
+      `Unknown tool: ${name}. Available tools: ${tools.map((item) => item.name).join(", ")}`,
+    );
+  }
+
+  const searchParams = new URLSearchParams({ apikey: apiKey });
+  const params = tool.params?.(args);
+  if (params) {
+    for (const [key, value] of Object.entries(params)) {
+      if (key !== "_apiKey" && value != null) {
+        searchParams.set(key, String(value));
       }
     }
-
-    const response = await fetch(`${BASE}${path}?${searchParams}`, {
-      headers: {
-        Accept: "application/json",
-      },
-    });
-
-    if (response.status === 401 || response.status === 403) {
-      throw new Error("FMP: invalid API key.");
-    }
-    if (response.status === 402) {
-      throw new Error(
-        "FMP: 402 — this endpoint requires a paid plan. See https://site.financialmodelingprep.com/pricing-plans.",
-      );
-    }
-    if (response.status === 429) {
-      throw new Error(
-        "FMP: 429 rate limit. See https://site.financialmodelingprep.com/developer/docs.",
-      );
-    }
-    if (!response.ok) {
-      throw new Error(`FMP: ${response.status}`);
-    }
-
-    return response.json();
-  };
-
-  const requireString = (key: string, example: string) => {
-    const value = args[key];
-    if (typeof value !== "string") {
-      throw new Error(
-        `Required argument "${key}" is missing. Pass a string like ${example}.`,
-      );
-    }
-    const trimmed = value.trim();
-    if (!trimmed) {
-      throw new Error(
-        `Required argument "${key}" is missing. Pass a string like ${example}.`,
-      );
-    }
-    return trimmed;
-  };
-
-  const symbol = () => requireString("symbol", '"AAPL"');
-
-  switch (name) {
-    case "profile":
-      return get("/profile", { symbol: symbol() });
-    case "quote":
-      return get("/quote", { symbol: symbol() });
-    case "quote_short":
-      return get("/quote-short", { symbol: symbol() });
-    case "historical_price":
-      return get("/historical-price-eod/full", {
-        symbol: symbol(),
-        from: args.from,
-        to: args.to,
-      });
-    case "intraday":
-      return get(
-        `/historical-chart/${encodeURIComponent(
-          requireString("interval", '"1hour"'),
-        )}`,
-        { symbol: symbol() },
-      );
-    case "income_statement":
-      return get("/income-statement", {
-        symbol: symbol(),
-        period: args.period,
-        limit: args.limit,
-      });
-    case "balance_sheet":
-      return get("/balance-sheet-statement", {
-        symbol: symbol(),
-        period: args.period,
-        limit: args.limit,
-      });
-    case "cash_flow":
-      return get("/cash-flow-statement", {
-        symbol: symbol(),
-        period: args.period,
-        limit: args.limit,
-      });
-    case "ratios":
-      return get("/ratios", {
-        symbol: symbol(),
-        period: args.period,
-        limit: args.limit,
-      });
-    case "enterprise_value":
-      return get("/enterprise-values", {
-        symbol: symbol(),
-        period: args.period,
-        limit: args.limit,
-      });
-    case "key_metrics":
-      return get("/key-metrics", {
-        symbol: symbol(),
-        period: args.period,
-        limit: args.limit,
-      });
-    case "financial_growth":
-      return get("/financial-growth", {
-        symbol: symbol(),
-        period: args.period,
-        limit: args.limit,
-      });
-    case "search_symbol":
-      return get("/search-symbol", {
-        query: requireString("query", '"AAPL"'),
-        limit: args.limit,
-        exchange: args.exchange,
-      });
-    case "search_name":
-      return get("/search-name", {
-        query: requireString("query", '"apple"'),
-        limit: args.limit,
-        exchange: args.exchange,
-      });
-    case "stock_screener":
-      return get("/company-screener", args);
-    case "stock_news":
-      return get("/news/stock", args);
-    case "earnings_calendar":
-      return get("/earnings-calendar", args);
-    case "economic_calendar":
-      return get("/economic-calendar", args);
-    case "ipos_calendar":
-      return get("/ipos-calendar", args);
-    case "mergers_acquisitions":
-      return get("/mergers-acquisitions-latest", args);
-    case "delisted_companies":
-      return get("/delisted-companies", args);
-    case "insider_trading":
-      return get("/insider-trading-search", args);
-    case "institutional_ownership":
-      return get("/institutional-ownership/symbol-ownership", {
-        symbol: symbol(),
-      });
-    case "etf_holdings":
-      return get("/etf/holdings", { symbol: symbol() });
-    default:
-      throw new Error(`Unknown tool: ${name}`);
   }
+
+  const path = typeof tool.path === "function" ? tool.path(args) : tool.path;
+  const response = await fetch(`${BASE}${path}?${searchParams}`, {
+    headers: { Accept: "application/json" },
+  });
+
+  if (response.status === 401 || response.status === 403) {
+    throw new Error("FMP: invalid API key.");
+  }
+  if (response.status === 402) {
+    throw new Error(
+      "FMP: 402 — this endpoint requires a paid plan. See https://site.financialmodelingprep.com/pricing-plans.",
+    );
+  }
+  if (response.status === 429) {
+    throw new Error(
+      "FMP: 429 rate limit. See https://site.financialmodelingprep.com/developer/docs.",
+    );
+  }
+  if (!response.ok) {
+    throw new Error(`FMP: ${response.status}`);
+  }
+
+  return parseResponse(response);
 }
 
 export default {

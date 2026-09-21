@@ -6,8 +6,16 @@ import fmp from "./index.js";
 type MockResponse = {
   status: number;
   ok: boolean;
-  json: () => Promise<unknown>;
+  text: () => Promise<string>;
 };
+
+function response(status: number, body = ""): MockResponse {
+  return {
+    status,
+    ok: status >= 200 && status < 300,
+    text: async () => body,
+  };
+}
 
 function setFetch(
   impl: (input: string | URL | Request) => Promise<MockResponse>,
@@ -23,11 +31,7 @@ test("profile routes to the profile endpoint", async () => {
   let requestedUrl = "";
   const restoreFetch = setFetch(async (input) => {
     requestedUrl = String(input);
-    return {
-      status: 200,
-      ok: true,
-      json: async () => [{ ok: true }],
-    };
+    return response(200, '[{"ok":true}]');
   });
 
   try {
@@ -50,11 +54,7 @@ test("intraday encodes interval in the endpoint path", async () => {
   let requestedUrl = "";
   const restoreFetch = setFetch(async (input) => {
     requestedUrl = String(input);
-    return {
-      status: 200,
-      ok: true,
-      json: async () => [],
-    };
+    return response(200, "[]");
   });
 
   try {
@@ -73,12 +73,42 @@ test("intraday encodes interval in the endpoint path", async () => {
   }
 });
 
+test("success with an empty body returns null", async () => {
+  const restoreFetch = setFetch(async () => response(204));
+
+  try {
+    assert.equal(
+      await fmp.callTool("quote", { symbol: "AAPL", _apiKey: "demo" }),
+      null,
+    );
+  } finally {
+    restoreFetch();
+  }
+});
+
+test("missing API keys are rejected before any request is sent", async () => {
+  await assert.rejects(
+    () => fmp.callTool("quote", { symbol: "AAPL" }),
+    /FMP requires an API key\./,
+  );
+});
+
+test("missing string arguments are rejected", async () => {
+  await assert.rejects(
+    () => fmp.callTool("quote", { symbol: "   ", _apiKey: "demo" }),
+    /Required argument "symbol" is missing\./,
+  );
+});
+
+test("unknown tools list the supported names", async () => {
+  await assert.rejects(
+    () => fmp.callTool("missing_tool", { _apiKey: "demo" }),
+    /Available tools: profile, quote, quote_short/,
+  );
+});
+
 test("401 responses surface an invalid API key error", async () => {
-  const restoreFetch = setFetch(async () => ({
-    status: 401,
-    ok: false,
-    json: async () => ({}),
-  }));
+  const restoreFetch = setFetch(async () => response(401));
 
   try {
     await assert.rejects(
@@ -91,11 +121,7 @@ test("401 responses surface an invalid API key error", async () => {
 });
 
 test("402 responses surface a paid-plan error", async () => {
-  const restoreFetch = setFetch(async () => ({
-    status: 402,
-    ok: false,
-    json: async () => ({}),
-  }));
+  const restoreFetch = setFetch(async () => response(402));
 
   try {
     await assert.rejects(
@@ -108,16 +134,25 @@ test("402 responses surface a paid-plan error", async () => {
 });
 
 test("429 responses surface a rate-limit error", async () => {
-  const restoreFetch = setFetch(async () => ({
-    status: 429,
-    ok: false,
-    json: async () => ({}),
-  }));
+  const restoreFetch = setFetch(async () => response(429));
 
   try {
     await assert.rejects(
       () => fmp.callTool("quote", { symbol: "AAPL", _apiKey: "demo" }),
       /FMP: 429 rate limit\./,
+    );
+  } finally {
+    restoreFetch();
+  }
+});
+
+test("generic HTTP failures preserve the status code", async () => {
+  const restoreFetch = setFetch(async () => response(500));
+
+  try {
+    await assert.rejects(
+      () => fmp.callTool("quote", { symbol: "AAPL", _apiKey: "demo" }),
+      /FMP: 500/,
     );
   } finally {
     restoreFetch();
