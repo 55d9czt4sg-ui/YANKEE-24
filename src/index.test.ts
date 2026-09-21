@@ -56,6 +56,31 @@ test("profile routes to the profile endpoint", async () => {
   }
 });
 
+
+test("key_metrics uses the TTM endpoint", async () => {
+  let requestedUrl = "";
+  const restoreFetch = setFetch(async (input) => {
+    requestedUrl = String(input);
+    return response(200, "[]");
+  });
+
+  try {
+    await fmp.callTool("key_metrics", {
+      symbol: "AAPL",
+      period: "quarter",
+      limit: 5,
+      _apiKey: "demo",
+    });
+
+    assert.equal(
+      requestedUrl,
+      "https://financialmodelingprep.com/stable/key-metrics-ttm?apikey=demo&symbol=AAPL",
+    );
+  } finally {
+    restoreFetch();
+  }
+});
+
 test("intraday encodes interval in the endpoint path", async () => {
   let requestedUrl = "";
   const restoreFetch = setFetch(async (input) => {
@@ -162,6 +187,30 @@ test("caller-supplied apikey params cannot override the validated API key", asyn
   }
 });
 
+
+test("array query params are appended without overriding earlier values", async () => {
+  let requestedUrl = "";
+  const restoreFetch = setFetch(async (input) => {
+    requestedUrl = String(input);
+    return response(200, "[]");
+  });
+
+  try {
+    await fmp.callTool("stock_screener", {
+      sector: ["Technology", "Finance"],
+      limit: 10,
+      _apiKey: "demo",
+    });
+
+    assert.equal(
+      requestedUrl,
+      "https://financialmodelingprep.com/stable/company-screener?apikey=demo&sector=Technology&sector=Finance&limit=10",
+    );
+  } finally {
+    restoreFetch();
+  }
+});
+
 test("401 responses surface an invalid API key error", async () => {
   const restoreFetch = setFetch(async () => response(401));
 
@@ -208,6 +257,21 @@ test("generic HTTP failures preserve the status code", async () => {
     await assert.rejects(
       () => fmp.callTool("quote", { symbol: "AAPL", _apiKey: "demo" }),
       /FMP: 500/,
+    );
+  } finally {
+    restoreFetch();
+  }
+});
+
+test("generic HTTP failures include JSON error details", async () => {
+  const restoreFetch = setFetch(async () =>
+    response(500, '{"message":"upstream failed"}'),
+  );
+
+  try {
+    await assert.rejects(
+      () => fmp.callTool("quote", { symbol: "AAPL", _apiKey: "demo" }),
+      /FMP: 500 - \{"message":"upstream failed"\}/,
     );
   } finally {
     restoreFetch();

@@ -59,6 +59,26 @@ const statementParams = (args: Record<string, unknown>) => ({
   limit: args.limit,
 });
 
+const appendSearchParams = (
+  searchParams: URLSearchParams,
+  params: Record<string, unknown>,
+) => {
+  for (const [key, value] of Object.entries(params)) {
+    if (key === "_apiKey" || key === "apikey" || value == null) {
+      continue;
+    }
+    if (Array.isArray(value)) {
+      for (const entry of value) {
+        if (entry != null) {
+          searchParams.append(key, String(entry));
+        }
+      }
+      continue;
+    }
+    searchParams.set(key, String(value));
+  }
+};
+
 const searchParams = (args: Record<string, unknown>, example: string) => ({
   query: requireString(args, "query", example),
   limit: args.limit,
@@ -221,13 +241,11 @@ const toolConfigs: ToolConfig[] = [
       type: "object",
       properties: {
         symbol: { type: "string" },
-        period: { type: "string" },
-        limit: { type: "number" },
       },
       required: ["symbol"],
     },
-    path: "/key-metrics",
-    params: statementParams,
+    path: "/key-metrics-ttm",
+    params: symbolParams,
   },
   {
     name: "financial_growth",
@@ -401,24 +419,34 @@ const tools = toolConfigs.map(({ name, description, inputSchema }) => ({
 
 const toolConfigByName = new Map(toolConfigs.map((tool) => [tool.name, tool]));
 
-async function parseResponse(response: Response): Promise<unknown> {
+async function parseResponse(
+  response: Response,
+  options: { allowText?: boolean } = {},
+): Promise<unknown> {
   const contentType = response.headers.get("content-type") ?? "";
   const text = await response.text();
   if (!text.trim()) {
     return null;
   }
 
-  if (
-    contentType &&
-    !contentType.includes("application/json") &&
-    !contentType.includes("+json")
-  ) {
+  const expectsJson =
+    !contentType ||
+    contentType.includes("application/json") ||
+    contentType.includes("+json");
+
+  if (!expectsJson) {
+    if (options.allowText) {
+      return text;
+    }
     throw new Error(`FMP: expected JSON response but received ${contentType}.`);
   }
 
   try {
     return JSON.parse(text) as unknown;
   } catch {
+    if (options.allowText) {
+      return text;
+    }
     throw new Error("FMP: expected a JSON response from upstream.");
   }
 }
@@ -446,11 +474,7 @@ async function callTool(
   const searchParams = new URLSearchParams({ apikey: apiKey });
   const params = tool.params?.(args);
   if (params) {
-    for (const [key, value] of Object.entries(params)) {
-      if (key !== "_apiKey" && key !== "apikey" && value != null) {
-        searchParams.set(key, String(value));
-      }
-    }
+    appendSearchParams(searchParams, params);
   }
 
   const path = typeof tool.path === "function" ? tool.path(args) : tool.path;
@@ -472,7 +496,14 @@ async function callTool(
     );
   }
   if (!response.ok) {
-    throw new Error(`FMP: ${response.status}`);
+    const details = await parseResponse(response, { allowText: true });
+    const suffix =
+      details == null
+        ? ""
+        : ` - ${
+            typeof details === "string" ? details : JSON.stringify(details)
+          }`;
+    throw new Error(`FMP: ${response.status}${suffix}`);
   }
 
   return parseResponse(response);
