@@ -1,0 +1,29 @@
+{
+  "name": "@pipeworx/mcp-fmp",
+  "version": "0.1.0",
+  "description": "Financial Modeling Prep MCP (/stable API; v3 deprecated 2025-08-31).",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "keywords": [
+    "mcp",
+    "mcp-server",
+    "model-context-protocol",
+    "pipeworx",
+    "fmp"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/pipeworx-io/mcp-fmp"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "npm run build && node --test dist/**/*.test.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.2",
+    "typescript": "^5.7.0"
+  }
+}
