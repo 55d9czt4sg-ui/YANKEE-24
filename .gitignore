@@ -6,3 +6,5 @@
 .idea/stocks-info.iml
 .idea/vcs.xml
 .DS_Store
+node_modules/
+dist/
