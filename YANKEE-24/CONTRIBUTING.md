@@ -28,15 +28,21 @@ Issues are prioritized by **severity**:
 
 ## Ownership Model
 
-The repository is organized by functional area:
+The repository is organized by functional area with assigned owners:
 
-| Area | Responsibility |
-|------|-----------------|
-| **Infrastructure & CI/CD** | GitHub Actions, automation, build pipeline |
-| **Feature Development** | Core functionality, feature implementation |
-| **Documentation** | Setup guides, API docs, usage examples |
-| **Testing & QA** | Test coverage, validation, quality assurance |
-| **Security & Dependencies** | npm audit, vulnerability scanning, dependency updates |
+| Area | Owner | Responsibility |
+|------|-------|-----------------|
+| **Infrastructure & CI/CD** | @55d9czt4sg-ui | GitHub Actions, automation, build pipeline |
+| **Feature Development** | @55d9czt4sg-ui | Core functionality, feature implementation |
+| **Documentation** | @55d9czt4sg-ui | Setup guides, API docs, usage examples |
+| **Testing & QA** | @55d9czt4sg-ui | Test coverage, validation, quality assurance |
+| **Security & Dependencies** | @55d9czt4sg-ui | npm audit, vulnerability scanning, dependency updates |
+
+**Owner Assignment Process:**
+- Each area is assigned an owner responsible for triaging issues and PRs in their domain
+- Owners are responsible for enforcing response SLAs (see Response SLAs section)
+- Owners review and approve PRs related to their area
+- Cross-team issues should be tagged with all relevant area labels and discussed across owners
 
 ## Issue Workflow
 
