@@ -1,7 +1,8 @@
 """Screener: filter engine and ranking logic."""
 
-from typing import List, Tuple
+from typing import List, Tuple, Dict
 import config
+from models import Ticker, GEXData, VannaData, Setup
 
 
 class IVTrendAnalyzer:
@@ -127,3 +128,122 @@ class DealerScorer:
         )
 
         return round(composite, 1)
+
+
+class ScreeningEngine:
+    """Main screening engine: filter and rank candidates."""
+
+    def __init__(self):
+        self.iv_analyzer = IVTrendAnalyzer()
+        self.scorer = DealerScorer()
+
+    def apply_filter(self, setup: Setup) -> bool:
+        """
+        Apply all 6 required filters.
+
+        Returns True only if ALL 6 conditions are met:
+        1. Positive gamma (net_gamma > 0)
+        2. Positive vanna regime
+        3. IV dropping
+        4. Price within 3% above put wall
+        5. Expiration in 0-21 DTE
+        6. Bullish drift active (target > price)
+        """
+        required_filters = {
+            "positive_gamma",
+            "positive_vanna",
+            "iv_dropping",
+            "put_wall_proximity",
+            "dte_range",
+            "bullish_drift",
+        }
+
+        # All must pass
+        for filter_name in required_filters:
+            if not setup.filters_passed.get(filter_name, False):
+                return False
+
+        return True
+
+    def apply_filter_dict(self, filters_passed: Dict[str, bool]) -> bool:
+        """Apply all 6 filters from a dict. Returns True if all pass."""
+        required = {
+            "positive_gamma",
+            "positive_vanna",
+            "iv_dropping",
+            "put_wall_proximity",
+            "dte_range",
+            "bullish_drift",
+        }
+        return all(filters_passed.get(f, False) for f in required)
+
+    def check_conditions(
+        self,
+        ticker: Ticker,
+        gex: GEXData,
+        vanna: VannaData,
+        iv_3day_avg: float,
+        iv_5day_avg: float,
+        expirations_dte: List[int],  # List of DTEs for expirations with data
+    ) -> Dict[str, bool]:
+        """
+        Check all 6 conditions for a ticker.
+
+        Returns dict of condition -> bool:
+        {
+            "positive_gamma": True/False,
+            "positive_vanna": True/False,
+            "iv_dropping": True/False,
+            "put_wall_proximity": True/False,
+            "dte_range": True/False,
+            "bullish_drift": True/False,
+        }
+        """
+        is_iv_dropping, _ = self.iv_analyzer.calculate_iv_trend(
+            ticker.current_iv, iv_3day_avg, iv_5day_avg
+        )
+
+        # Check DTE range: at least one expiration in 0-21 days
+        has_valid_dte = any(0 <= dte <= config.DTE_MAX for dte in expirations_dte)
+
+        # Check put wall proximity: price <= put_wall * 1.03
+        put_wall_pct = ticker.distance_to_put_wall_pct()
+        within_put_wall = put_wall_pct <= config.PUT_WALL_PROXIMITY_PCT
+
+        # Check bullish drift: target > price
+        has_drift = ticker.bullish_target > ticker.current_price
+
+        return {
+            "positive_gamma": gex.net_gamma > 0,
+            "positive_vanna": vanna.vanna_regime == "positive",
+            "iv_dropping": is_iv_dropping,
+            "put_wall_proximity": within_put_wall,
+            "dte_range": has_valid_dte,
+            "bullish_drift": has_drift,
+        }
+
+    def get_status_badge(self, gamma_buildup_pct: float) -> str:
+        """Return status badge based on gamma buildup %."""
+        if gamma_buildup_pct >= config.GAMMA_BUILDUP_THRESHOLDS["EXPLOSIVE"]:
+            return "EXPLOSIVE"
+        elif gamma_buildup_pct >= config.GAMMA_BUILDUP_THRESHOLDS["HOT"]:
+            return "HOT"
+        elif gamma_buildup_pct >= config.GAMMA_BUILDUP_THRESHOLDS["PRIME"]:
+            return "PRIME"
+        elif gamma_buildup_pct >= config.GAMMA_BUILDUP_THRESHOLDS["SOLID"]:
+            return "SOLID"
+        else:
+            return "CAUTION"
+
+    def get_trade_recommendation(self, status: str) -> str:
+        """Return trade recommendation based on status."""
+        if status == "EXPLOSIVE":
+            return "MOMENTUM_SCALP_OR_CALL_SPREAD"
+        elif status == "HOT":
+            return "BUY_DIPS_OR_SHORT_PUTS"
+        elif status == "PRIME":
+            return "BUY_DIPS"
+        elif status == "SOLID":
+            return "DIP_BUYER"
+        else:
+            return "SKIP"
