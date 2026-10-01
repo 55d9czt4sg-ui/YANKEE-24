@@ -2,6 +2,12 @@
 
 This guide covers every command-line flag, output format, and practical usage pattern for the Core Market Regime Framework screener.
 
+> **Implementation status:** This Python screener is separate from the published
+> FMP MCP package. No QuantWheel transport is configured by this CLI; live calls
+> require supplying an MCP tool caller to `QuantWheelClient`. The scan fails
+> closed and skips a ticker when current IV, historical IV averages, GEX, or a
+> valid put wall is unavailable. This is not production trading software.
+
 ## Table of Contents
 
 1. [CLI Reference](#cli-reference)
@@ -217,7 +223,7 @@ python main.py --min-bull-bear 2.0 --top-n 10
 ---
 
 #### `--no-cache`
-**Purpose:** Skip the cache layer and fetch all data fresh from QuantWheel.
+**Purpose:** Bypass the in-process cache and fetch through the configured MCP tool caller.
 
 **Data type:** Boolean flag (no value required)
 
@@ -237,7 +243,8 @@ python main.py --no-cache --top-n 5
 
 **Notes:**
 - Slower (hits API for every ticker)
-- Without --no-cache: 80%+ cache hit rate (5-min TTL)
+- The cache is process-local; each CLI scan creates a new client, so no
+  cross-scan hit rate is promised.
 
 ---
 
@@ -464,34 +471,30 @@ python main.py --export-json
 
 **Output:** `scans/2026-10-01-14-30.json`
 
-**Sample JSON structure:**
+**Sample JSON structure (matches `JSONExporter`):**
 ```json
 {
-  "timestamp": "2026-10-01T14:30:00Z",
-  "universe": ["SPX", "NDX"],
-  "tickers_scanned": 600,
-  "candidates_passed": 5,
-  "data_freshness_minutes": 2,
-  "cache_hit_rate": 0.815,
-  "ranked_list": [
+  "scan": {
+    "timestamp": "2026-10-01T14:30:00Z",
+    "universe": ["custom"],
+    "tickers_scanned": 10,
+    "candidates_passed": 1,
+    "data_freshness_minutes": 0,
+    "cache_hit_rate": 0.0
+  },
+  "candidates": [
     {
-      "ticker": {
-        "name": "NVDA",
-        "current_price": 120.45,
-        "current_iv": 0.32,
-        "bullish_target": 130.00,
-        "put_wall": 115.00,
-        "call_wall": 135.00
-      },
-      "gex": {
-        "net_gamma": 0.045,
-        "gamma_buildup_pct": 240.5
-      },
-      "vanna": {
-        "vanna_regime": "positive",
-        "bull_bear_ratio": 2.15,
-        "bullish_target": 130.00
-      },
+      "rank": 1,
+      "ticker": "NVDA",
+      "current_price": 120.45,
+      "bullish_target": 130.0,
+      "put_wall": 115.0,
+      "call_wall": 135.0,
+      "bull_bear_ratio": 2.15,
+      "gamma_buildup_pct": 240.5,
+      "composite_rank": 9.2,
+      "status": "HOT",
+      "trade_recommendation": "BUY_DIPS_OR_SHORT_PUTS",
       "filters_passed": {
         "positive_gamma": true,
         "positive_vanna": true,
@@ -499,10 +502,7 @@ python main.py --export-json
         "put_wall_proximity": true,
         "dte_range": true,
         "bullish_drift": true
-      },
-      "composite_rank": 9.2,
-      "status": "HOT",
-      "trade_recommendation": "MOMENTUM_SCALP"
+      }
     }
   ]
 }
@@ -607,7 +607,7 @@ python main.py --no-cache
 
 **What it does:**
 1. Skips cache entirely
-2. Fetches all data from QuantWheel
+2. Fetches data through the configured MCP tool caller
 3. (Slower but guaranteed fresh)
 
 **Use case:** Market opened, need latest positioning.
@@ -621,9 +621,9 @@ python main.py --cache-ttl 30
 ```
 
 **What it does:**
-1. Uses existing cache (if any)
-2. Extends TTL to 30 minutes
-3. Minimal API load
+1. Uses cache entries created by this client process (if any)
+2. Sets TTL to 30 minutes for newly created entries
+3. No cache is shared between CLI invocations
 
 **Use case:** Running multiple scans in a short window.
 
@@ -666,24 +666,38 @@ Data Freshness:         2 minutes
 
 ### JSON Format
 
-**Structure:**
+**Structure (matches `JSONExporter`):**
 ```json
 {
-  "timestamp": "ISO-8601",
-  "universe": ["SPX", "NDX"],
-  "tickers_scanned": 600,
-  "candidates_passed": 5,
-  "data_freshness_minutes": 2,
-  "cache_hit_rate": 0.815,
-  "ranked_list": [
+  "scan": {
+    "timestamp": "ISO-8601",
+    "universe": ["custom"],
+    "tickers_scanned": 10,
+    "candidates_passed": 1,
+    "data_freshness_minutes": 0,
+    "cache_hit_rate": 0.0
+  },
+  "candidates": [
     {
-      "ticker": {...},
-      "gex": {...},
-      "vanna": {...},
-      "filters_passed": {...},
+      "rank": 1,
+      "ticker": "NVDA",
+      "current_price": 120.45,
+      "bullish_target": 130.0,
+      "put_wall": 115.0,
+      "call_wall": 135.0,
+      "bull_bear_ratio": 2.15,
+      "gamma_buildup_pct": 240.5,
       "composite_rank": 9.2,
       "status": "HOT",
-      "trade_recommendation": "MOMENTUM_SCALP"
+      "trade_recommendation": "BUY_DIPS_OR_SHORT_PUTS",
+      "filters_passed": {
+        "positive_gamma": true,
+        "positive_vanna": true,
+        "iv_dropping": true,
+        "put_wall_proximity": true,
+        "dte_range": true,
+        "bullish_drift": true
+      }
     }
   ]
 }
@@ -789,7 +803,6 @@ python main.py --watchlist tech.json
 **Cache:**
 ```python
 CACHE_TTL_MINUTES = 5
-CACHE_BACKEND = "memory"  # "memory" or "sqlite"
 ```
 
 **Filtering thresholds:**
@@ -886,7 +899,7 @@ python main.py --min-dealer-score 50
 # Fetch fresh data
 python main.py --no-cache
 
-# Check API connectivity
+# Check for missing data/transport warnings
 python main.py --debug
 ```
 
@@ -894,17 +907,14 @@ python main.py --debug
 
 ### Cache Issues
 
-**Symptom: "Cache miss on every run"**
+**Expected behavior:** Every new CLI process creates a new in-memory cache.
 
 **Solution:**
 ```bash
-# Verify cache is working
+# Verify cache lookups within a process
 python main.py --debug | grep cache
 
-# Reset cache (clear old entries)
-# (No built-in command; cache clears on new run)
-
-# Extend TTL to increase hit rate
+# Extend TTL for repeated lookups within that process
 python main.py --cache-ttl 10
 ```
 

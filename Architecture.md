@@ -2,6 +2,10 @@
 
 This document covers the technical architecture, module dependencies, data flow, and design decisions for the Core Market Regime Framework.
 
+> The Python screener is separate from the published FMP MCP package. This
+> repository does not configure a QuantWheel MCP transport; callers must inject
+> a compatible client, and missing IV history or put-wall data is rejected.
+
 ## Table of Contents
 
 1. [System Design](#system-design)
@@ -116,7 +120,6 @@ output.py
 ```python
 # Cache settings
 CACHE_TTL_MINUTES = 5
-CACHE_BACKEND = "memory"
 
 # Filtering thresholds
 IV_DROP_THRESHOLD = "3day_avg"
@@ -277,8 +280,8 @@ class Cache:
 
 **Performance:**
 - O(1) get/set operations (dict-based)
-- 5-minute TTL = 80%+ hit rate in normal usage
-- Survives single run (cleared between program executions)
+- 5-minute TTL controls reuse within one client process
+- Cache is cleared when the client/process exits
 
 #### `QuantWheelClient`
 ```python
@@ -387,7 +390,7 @@ class ScreeningEngine:
 3. `iv_dropping`: IVTrendAnalyzer.calculate_iv_trend()[0]
 4. `put_wall_proximity`: price <= put_wall * (1 + PUT_WALL_PROXIMITY_PCT/100)
 5. `dte_range`: min(expirations_dte) >= DTE_MIN and max(expirations_dte) <= DTE_MAX
-6. `bullish_drift`: ticker.current_price > vanna.bullish_target
+6. `bullish_drift`: vanna.bullish_target > ticker.current_price
 
 ---
 
@@ -502,23 +505,35 @@ class JSONExporter:
 **Output structure:**
 ```json
 {
-  "timestamp": "2026-10-01T14:30:00Z",
-  "universe": ["SPX", "NDX"],
-  "tickers_scanned": 600,
-  "candidates_passed": 2,
-  "ranked_list": [
+  "scan": {
+    "timestamp": "2026-10-01T14:30:00Z",
+    "universe": ["custom"],
+    "tickers_scanned": 10,
+    "candidates_passed": 1,
+    "data_freshness_minutes": 0,
+    "cache_hit_rate": 0.0
+  },
+  "candidates": [
     {
-      "ticker": {
-        "name": "NVDA",
-        "current_price": 120.45,
-        "bullish_target": 130.00,
-        ...
-      },
-      "gex": {"net_gamma": 0.045, "gamma_buildup_pct": 240.5},
-      "vanna": {"bull_bear_ratio": 2.15, ...},
+      "rank": 1,
+      "ticker": "NVDA",
+      "current_price": 120.45,
+      "bullish_target": 130.0,
+      "put_wall": 115.0,
+      "call_wall": 135.0,
+      "bull_bear_ratio": 2.15,
+      "gamma_buildup_pct": 240.5,
       "composite_rank": 9.2,
       "status": "HOT",
-      ...
+      "trade_recommendation": "BUY_DIPS_OR_SHORT_PUTS",
+      "filters_passed": {
+        "positive_gamma": true,
+        "positive_vanna": true,
+        "iv_dropping": true,
+        "put_wall_proximity": true,
+        "dte_range": true,
+        "bullish_drift": true
+      }
     }
   ]
 }
@@ -693,7 +708,7 @@ check_conditions(...) → {
     "iv_dropping": True,
     "put_wall_proximity": True,
     "dte_range": True,
-    "bullish_drift": True,          # price (445.20) > target (460.00) → FALSE ❌
+    "bullish_drift": True,          # target (460.00) > price (445.20)
 }
 
 apply_filter_dict(filters) → False  # Bullish drift failed
@@ -703,7 +718,8 @@ Result: META FILTERED OUT
 
 **NVDA:**
 ```
-[Similar API calls → cache hits on 2nd run]
+[A new CLI process creates an empty cache; only repeated lookups in the same
+client process can hit cached values.]
 
 check_conditions(...) → {
     "positive_gamma": True,
@@ -958,7 +974,7 @@ Third scan (10 minutes later, expired):
 - CLI argument combinations verified
 
 **Future enhancements:**
-- Integration tests with real QuantWheel API
+- Live QuantWheel transport and response validation
 - Performance benchmarks (large watchlists)
 - Edge case: market closes during scan
 - Parallel processing for 600+ tickers
@@ -1035,16 +1051,16 @@ Third scan (10 minutes later, expired):
 
 **Reasoning:**
 - **Intraday frequency**: Traders scan every 5-15 minutes
-- **Hit rate**: 80%+ with typical usage patterns
+- **Hit rate**: measured only for cache lookups in the current client process
 - **Freshness**: Options data changes significantly every 5 min
 - **API load**: Balances freshness vs API call count
 
 **Typical usage:**
 ```
 9:30 AM: Scan → All API calls (0% cached)
-9:35 AM: Scan → All from cache (100% hit)
-9:40 AM: Scan → All from cache (100% hit)
-9:45 AM: Scan → All refreshed (5 min expired)
+9:35 AM: New CLI process → cache starts empty
+9:40 AM: New CLI process → cache starts empty
+9:45 AM: New CLI process → cache starts empty
 ```
 
 **Configurable:** Users can override with `--cache-ttl`.
@@ -1161,7 +1177,7 @@ SKIP
 ## Future Enhancements
 
 ### Short-Term (1-2 weeks)
-1. Real QuantWheel API integration (currently mocked)
+1. A configured QuantWheel transport and live response validation
 2. Historical backtesting module
 3. Persistent cache (SQLite)
 4. Real-time alerts via email/SMS

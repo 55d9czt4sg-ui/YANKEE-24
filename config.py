@@ -3,7 +3,6 @@
 
 # Cache settings
 CACHE_TTL_MINUTES = 5
-CACHE_BACKEND = "memory"  # "memory" or "sqlite"
 
 # Filtering thresholds
 IV_DROP_THRESHOLD = "3day_avg"  # current_iv < 3day_avg_iv
@@ -37,12 +36,12 @@ SPX_500_TICKERS = [
 ]
 
 NDX_100_TICKERS = [
-    "TSLA", "NVIDIA", "AAPL", "MSFT", "AMZN", "GOOG", "META", "ASML", "COST",
+    "TSLA", "AAPL", "MSFT", "AMZN", "GOOG", "META", "ASML", "COST",
     "AVGO", "NFLX", "GOOGL", "NVDA", "INTC", "CSCO", "PYPL", "CMCSA", "AMD", "QCOM",
     # ... simplified for MVP; full list has 100
 ]
 
-ALL_TICKERS = list(set(SPX_500_TICKERS + NDX_100_TICKERS))  # ~600, deduped
+ALL_TICKERS = list(dict.fromkeys(SPX_500_TICKERS + NDX_100_TICKERS))
 
 # QuantWheel API settings
 QW_API_TIMEOUT_SEC = 10

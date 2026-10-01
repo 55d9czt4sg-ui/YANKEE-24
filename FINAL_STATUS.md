@@ -1,13 +1,14 @@
 # Core Market Regime Framework - Final Status Report
 
 **Date**: 2026-10-01  
-**Status**: ✓ PRODUCTION READY
+**Status**: NOT PRODUCTION READY
 
 ## Executive Summary
 
-The Core Market Regime Framework is a professional-grade market scanning system for identifying bullish drift opportunities in the SPX+NDX universe. The system has completed all development phases and successfully passed comprehensive integration testing.
+The Python screener is an experimental implementation, separate from the published FMP MCP package. It has no configured QuantWheel transport and requires an injected MCP tool caller with live IV history and wall data before scans can produce candidates. Mock-based tests do not validate a live data path or establish deployment readiness.
 
-**Key Achievement**: 95/95 tests passing (69 existing + 8 new integration tests + 18 quantwheel_client tests)
+**Current validation**: 102 tests pass; the repository-wide run also exposes one
+legacy root-level test that still expects the former placeholder CLI behavior.
 
 ---
 
@@ -31,9 +32,9 @@ The Core Market Regime Framework is a professional-grade market scanning system 
   - `test_quantwheel_client.py`: 220 lines (28 client tests)
 
 ### Test Results
-- **Total Tests**: 95
-- **Passing**: 95 (100%)
-- **Failing**: 0
+- **Total Tests**: 103
+- **Passing**: 102
+- **Failing**: 1 (legacy root-level placeholder CLI test)
 - **Coverage Areas**:
   - Full pipeline integration (fetch → filter → score → rank → output)
   - CLI argument parsing (12 flags tested)
@@ -198,13 +199,13 @@ The Core Market Regime Framework is a professional-grade market scanning system 
 ## Known Limitations & Future Enhancements
 
 ### Current Limitations
-1. **Mock GEX/Vanna Data** - Placeholder values used in main.py comments indicate future real data integration
-2. **Hardcoded Expiration** - Single expiration date "2026-10-18" for GEX (should scan multiple DTEs)
-3. **Placeholder IV Averages** - IV trend calculated from current IV * factor (should use historical data)
-4. **Static Dealer Score** - Placeholder dealer scores in ranking (should calculate from positioning data)
+1. **No configured transport** - The CLI has no QuantWheel MCP client configuration; a caller must be supplied programmatically.
+2. **Data availability** - IV history and a valid put wall are required; tickers missing these fields are skipped.
+3. **Single expiration** - The scan still uses a fixed example expiration and does not select live expirations by DTE.
+4. **Unverified live behavior** - Tests use mocks and do not validate QuantWheel responses or trading outcomes.
 
 ### Recommended Next Steps
-1. **Integrate Real QuantWheel API** - Replace mock data with actual GEX/Vanna API calls
+1. **Configure and validate a supported QuantWheel MCP transport**
 2. **Multi-DTE Scanning** - Scan 0-7, 8-14, 15-21 DTE expirations for each ticker
 3. **Historical IV Data** - Calculate true 3-day and 5-day IV averages from market data
 4. **Advanced Dealer Scoring** - Map positioning data to dealer sentiment scores
@@ -230,36 +231,24 @@ pytest-cov (optional, for coverage reports)
 ```
 
 ### External Services
-- QuantWheel API (for GEX, Vanna, and quote data)
-- MCP framework (for QuantWheel integration)
+- A caller-provided QuantWheel MCP client (not configured by this repository)
 
 ---
 
 ## Deployment Readiness
 
-### Pre-Production Checks
-- ✓ All 95 tests passing
-- ✓ CLI functional (--help works, no crashes)
-- ✓ Error handling comprehensive
-- ✓ Documentation complete
-- ✓ Configuration centralized
-- ✓ No hardcoded credentials or secrets
-- ✓ Type hints present on critical functions
-- ✓ Logging properly implemented
-
-### Production Deployment Steps
-1. Set QuantWheel API credentials in environment
-2. Configure cache TTL and watchlist path
-3. Deploy to server/cron environment
-4. Run daily scan: `python main.py --export-json --export-csv`
-5. Monitor scan logs and export files
-6. Alert on anomalies (zero candidates, API failures)
+### Production Deployment
+Do not deploy for trading use. A supported transport, live data validation,
+expiration selection, and independent strategy validation are still required.
 
 ---
 
 ## Summary
 
-The Core Market Regime Framework is a **production-ready** trading screener that successfully:
+The Core Market Regime Framework is an **experimental screener**, not a
+production-ready trading system. Unit and mocked integration tests establish
+behavior only for supplied fixtures; they do not establish live API
+connectivity, data quality, profitability, or safe deployment.
 
 - ✓ Scans SPX+NDX universe for bullish drift opportunities
 - ✓ Applies sophisticated 6-condition filtering logic
@@ -268,11 +257,12 @@ The Core Market Regime Framework is a **production-ready** trading screener that
 - ✓ Handles edge cases gracefully
 - ✓ Includes comprehensive error handling
 - ✓ Provides configurable parameters for traders
-- ✓ Passes 95/95 automated tests
+- ✓ 102 Python tests pass; one legacy root-level placeholder CLI test fails
 
-The system is ready for integration with QuantWheel's real API and deployment to production trading environments.
+The repository's MCP package remains the FMP service; the Python screener is
+not integrated into that package or its published entry point.
 
-**Quality Gate Status**: APPROVED ✓
+**Deployment Status**: BLOCKED
 
 ---
 

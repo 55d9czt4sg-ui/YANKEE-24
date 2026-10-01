@@ -123,6 +123,38 @@ def test_get_quote_returns_tuple():
         assert result == (221.82, 18.5)
 
 
+def test_missing_quote_iv_is_not_fabricated():
+    client = QuantWheelClient()
+    with patch.object(
+        client,
+        "_fetch_quote_from_qw",
+        return_value={"price": 221.82, "iv": None},
+    ):
+        assert client.get_quote("NVDA") == (221.82, None)
+
+
+def test_no_cache_forces_fresh_fetches():
+    client = QuantWheelClient(no_cache=True)
+    with patch.object(
+        client,
+        "_fetch_gex_from_qw",
+        return_value={"net_gamma": 150.5, "gamma_buildup_pct": 50.7},
+    ) as mock_fetch:
+        client.get_gex("NVDA", "2026-10-18")
+        client.get_gex("NVDA", "2026-10-18")
+        assert mock_fetch.call_count == 2
+        assert client.cache_stats()["cache_entries"] == 0
+
+
+def test_mcp_transport_uses_supplied_tool_caller():
+    caller = MagicMock(return_value={"price": 10})
+    client = QuantWheelClient(mcp_tool_caller=caller)
+    assert client._call_mcp_tool("get_stock_quote", {"ticker": "AAPL"}) == {
+        "price": 10
+    }
+    caller.assert_called_once_with("get_stock_quote", {"ticker": "AAPL"})
+
+
 def test_get_all_tickers():
     """Test get_all_tickers returns list."""
     client = QuantWheelClient()
@@ -310,7 +342,7 @@ def test_fetch_quote_extracts_price():
         result = client._fetch_quote_from_qw("NVDA")
         assert result is not None
         assert result["price"] == 221.82
-        assert result["iv"] == 0.0  # No IV in stock quote
+        assert result["iv"] is None
 
 
 def test_fetch_quote_handles_fallback_price_field():
@@ -414,7 +446,7 @@ def test_quote_integration_with_cache():
         # First call: MCP -> cache -> tuple
         result1 = client.get_quote("NVDA")
         assert isinstance(result1, tuple)
-        assert result1 == (221.82, 0.0)
+        assert result1 == (221.82, None)
 
         # Second call: cache hit
         result2 = client.get_quote("NVDA")

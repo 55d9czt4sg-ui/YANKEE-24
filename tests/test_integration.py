@@ -35,13 +35,26 @@ class TestFullScanPipeline:
             "AMD": {"quote": (200.0, 21.0), "gex": 35.0, "vanna": 1.0},
         }
 
-        def mock_get_quote(ticker):
-            return test_data.get(ticker, {}).get("quote")
+        def mock_get_quote_data(ticker):
+            quote = test_data.get(ticker, {}).get("quote")
+            if quote is None:
+                return None
+            return {
+                "price": quote[0],
+                "iv": quote[1],
+                "iv_3day_avg": quote[1] * 1.1,
+                "iv_5day_avg": quote[1] * 1.15,
+            }
 
         def mock_get_gex(ticker, expiration):
             if ticker in test_data:
                 buildup = test_data[ticker]["gex"]
-                return GEXData(net_gamma=buildup * 1000, gamma_buildup_pct=buildup)
+                return GEXData(
+                    net_gamma=buildup * 1000,
+                    gamma_buildup_pct=buildup,
+                    put_wall=test_data[ticker]["quote"][0] * 0.99,
+                    call_wall=test_data[ticker]["quote"][0] * 1.05,
+                )
             return None
 
         def mock_get_vanna_charm(ticker):
@@ -55,12 +68,13 @@ class TestFullScanPipeline:
                 )
             return None
 
-        mock_client.get_quote.side_effect = mock_get_quote
+        mock_client.get_quote_data.side_effect = mock_get_quote_data
         mock_client.get_gex.side_effect = mock_get_gex
         mock_client.get_vanna_charm.side_effect = mock_get_vanna_charm
 
         args = Mock()
         args.cache_ttl = 60
+        args.no_cache = False
         args.debug = False
         args.min_gamma_buildup = None
         args.min_dealer_score = None
@@ -68,18 +82,24 @@ class TestFullScanPipeline:
         args.min_bull_bear = None
         args.top_n = None
         args.quiet = True
+        mock_client.cache_stats.return_value = {
+            "cache_hit_rate": 0.0,
+            "oldest_cache_age_minutes": 0,
+        }
 
         tickers = list(test_data.keys())
         result = main.run_scan(tickers, args)
 
         assert result.tickers_scanned == 10
-        assert result.candidates_passed >= 0
-        if result.ranked_list:
-            for i in range(len(result.ranked_list) - 1):
-                assert (
-                    result.ranked_list[i].composite_rank
-                    >= result.ranked_list[i + 1].composite_rank
-                )
+        assert result.candidates_passed == 8
+        assert {setup.ticker.name for setup in result.ranked_list} == {
+            "AAPL", "MSFT", "NVDA", "TSLA", "META", "NFLX", "INTC", "AMD"
+        }
+        ranks = {setup.ticker.name: setup.composite_rank for setup in result.ranked_list}
+        assert ranks["NVDA"] > ranks["AAPL"]
+        assert result.ranked_list == sorted(
+            result.ranked_list, key=lambda setup: setup.composite_rank, reverse=True
+        )
 
 
 class TestCLIIntegration:
@@ -99,9 +119,24 @@ class TestCLIIntegration:
             "META": (500.0, 20.0),
         }
 
-        mock_client.get_quote.side_effect = lambda t: prices.get(t)
+        mock_client.get_quote_data.side_effect = lambda t: (
+            {
+                "price": quote[0],
+                "iv": quote[1],
+                "iv_3day_avg": quote[1] * 1.1,
+                "iv_5day_avg": quote[1] * 1.15,
+            }
+            if (quote := prices.get(t))
+            else None
+        )
         mock_client.get_gex.side_effect = lambda t, e: (
-            GEXData(net_gamma=100000, gamma_buildup_pct=100) if t in prices else None
+            GEXData(
+                net_gamma=100000,
+                gamma_buildup_pct=100,
+                put_wall=prices[t][0] * 0.99,
+            )
+            if t in prices
+            else None
         )
         mock_client.get_vanna_charm.side_effect = lambda t: (
             VannaData(vanna_regime="positive", bull_bear_ratio=2.5, bullish_target=1000)
@@ -117,6 +152,7 @@ class TestCLIIntegration:
             args = Mock()
             args.watchlist = watchlist_path
             args.cache_ttl = 60
+            args.no_cache = False
             args.debug = False
             args.min_gamma_buildup = None
             args.min_dealer_score = None
@@ -124,6 +160,10 @@ class TestCLIIntegration:
             args.min_bull_bear = None
             args.top_n = 3
             args.quiet = True
+            mock_client.cache_stats.return_value = {
+                "cache_hit_rate": 0.0,
+                "oldest_cache_age_minutes": 0,
+            }
 
             tickers = main.load_tickers(watchlist_path)
             assert len(tickers) == 5

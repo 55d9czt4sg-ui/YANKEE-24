@@ -127,10 +127,28 @@ def test_load_tickers_from_json():
         Path(f.name).unlink()
 
 
+def test_load_tickers_normalizes_and_deduplicates():
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+        json.dump(["aapl", " AAPL ", "msft"], f)
+        f.flush()
+        assert load_tickers(f.name) == ["AAPL", "MSFT"]
+        Path(f.name).unlink()
+
+
+def test_load_tickers_rejects_non_array_json():
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+        json.dump({"ticker": "AAPL"}, f)
+        f.flush()
+        with pytest.raises(ValueError, match="array of ticker strings"):
+            load_tickers(f.name)
+        Path(f.name).unlink()
+
+
 def test_run_scan_returns_scan_result():
     """run_scan returns a ScanResult object."""
     args = MagicMock()
     args.cache_ttl = 5
+    args.no_cache = False
     args.debug = False
     args.quiet = False
     args.min_gamma_buildup = None
@@ -142,11 +160,29 @@ def test_run_scan_returns_scan_result():
     with patch("main.QuantWheelClient") as mock_qw:
         mock_client = MagicMock()
         mock_qw.return_value = mock_client
-        mock_client.get_quote.return_value = None  # Skip tickers
+        mock_client.get_quote_data.return_value = None  # Skip tickers
 
         result = run_scan(["NVDA"], args)
         assert isinstance(result, ScanResult)
         assert result.tickers_scanned == 1
+
+
+def test_run_scan_passes_no_cache_option_to_client():
+    args = MagicMock()
+    args.cache_ttl = 5
+    args.no_cache = True
+    args.debug = False
+    args.quiet = True
+    args.min_gamma_buildup = None
+    args.min_dealer_score = None
+    args.max_price = None
+    args.min_bull_bear = None
+    args.top_n = None
+
+    with patch("main.QuantWheelClient") as mock_qw:
+        mock_qw.return_value.get_quote_data.return_value = None
+        run_scan(["AAPL"], args)
+        mock_qw.assert_called_once_with(cache_ttl_minutes=5, no_cache=True)
 
 
 def test_parse_args_help():

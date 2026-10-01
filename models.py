@@ -12,13 +12,13 @@ class Ticker:
     current_price: float
     current_iv: float
     bullish_target: float
-    put_wall: float
-    call_wall: float
+    put_wall: Optional[float]
+    call_wall: Optional[float]
 
     def distance_to_put_wall_pct(self) -> float:
         """Calculate % distance above put wall."""
-        if self.put_wall <= 0:
-            return 0.0
+        if self.put_wall is None or self.put_wall <= 0:
+            return float("inf")
         return ((self.current_price - self.put_wall) / self.put_wall) * 100
 
 
@@ -28,6 +28,8 @@ class GEXData:
 
     net_gamma: float
     gamma_buildup_pct: float
+    put_wall: Optional[float] = None
+    call_wall: Optional[float] = None
 
 
 @dataclass

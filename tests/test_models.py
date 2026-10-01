@@ -19,6 +19,18 @@ def test_ticker_creation():
     assert t.put_wall == 220.0
 
 
+def test_missing_put_wall_fails_proximity():
+    t = Ticker(
+        name="NVDA",
+        current_price=221.82,
+        current_iv=18.5,
+        bullish_target=230.0,
+        put_wall=None,
+        call_wall=None,
+    )
+    assert t.distance_to_put_wall_pct() == float("inf")
+
+
 def test_gex_data_creation():
     gex = GEXData(net_gamma=150.5, gamma_buildup_pct=50.7)
     assert gex.net_gamma == 150.5

@@ -1,22 +1,16 @@
 """QuantWheel API client with caching layer."""
 
-from datetime import datetime, timedelta
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Callable
 from models import GEXData, VannaData
 import config
 import time
 import logging
-import subprocess
-import json
-import os
 
 logger = logging.getLogger(__name__)
 
-# MCP tool IDs for QuantWheel integration
-MCP_SERVER_ID = "mcp__11431736-9636-4f13-b188-bd28f29f1080"
-MCP_TOOL_GET_GEX = f"{MCP_SERVER_ID}__get_gex"
-MCP_TOOL_GET_VANNA = f"{MCP_SERVER_ID}__get_vanna_charm"
-MCP_TOOL_GET_QUOTE = f"{MCP_SERVER_ID}__get_stock_quote"
+MCP_TOOL_GET_GEX = "get_gex"
+MCP_TOOL_GET_VANNA = "get_vanna_charm"
+MCP_TOOL_GET_QUOTE = "get_stock_quote"
 
 
 class Cache:
@@ -26,6 +20,8 @@ class Cache:
         self._cache: Dict[str, tuple[Any, float]] = (
             {}
         )  # key -> (value, expiry_timestamp)
+        self.hits = 0
+        self.misses = 0
 
     def set(self, key: str, value: Any, ttl_minutes: int = 5):
         """Store a value with expiry."""
@@ -35,13 +31,16 @@ class Cache:
     def get(self, key: str) -> Optional[Any]:
         """Retrieve value if not expired."""
         if key not in self._cache:
+            self.misses += 1
             return None
 
         value, expiry = self._cache[key]
         if time.time() > expiry:
             del self._cache[key]
+            self.misses += 1
             return None
 
+        self.hits += 1
         return value
 
     def is_stale(self, key: str) -> bool:
@@ -66,11 +65,15 @@ class QuantWheelClient:
         self,
         cache_ttl_minutes: int = config.CACHE_TTL_MINUTES,
         mcp_enabled: bool = True,
+        no_cache: bool = False,
+        mcp_tool_caller: Optional[Callable[[str, Dict[str, Any]], Any]] = None,
     ):
         self.cache = Cache()
         self.cache_ttl_minutes = cache_ttl_minutes
         self.call_count = 0  # Track API calls for stats
         self.mcp_enabled = mcp_enabled  # Toggle for testing/mocking
+        self.no_cache = no_cache
+        self.mcp_tool_caller = mcp_tool_caller
 
     def _call_mcp_tool(
         self,
@@ -78,46 +81,31 @@ class QuantWheelClient:
         params: Dict[str, Any],
         timeout_sec: int = config.QW_API_TIMEOUT_SEC,
     ) -> Optional[Dict[str, Any]]:
-        """
-        Call an MCP tool via Claude Code / Anthropic SDK.
-        Falls back to mock if MCP is disabled or unavailable.
-        """
+        """Call an MCP tool through the supplied MCP client."""
         if not self.mcp_enabled:
             logger.debug(f"MCP disabled, skipping tool call: {tool_name}")
             return None
 
-        try:
-            # Try direct import first (for Claude Code environment)
-            try:
-                module_name = tool_name.replace("-", "_")
-                mcp_module = __import__(f"mcp__{module_name}", fromlist=[tool_name])
-                tool_func = getattr(mcp_module, tool_name, None)
-
-                if tool_func:
-                    response = tool_func(**params)
-                    if isinstance(response, dict):
-                        return response
-                    logger.debug(
-                        f"MCP tool {tool_name} returned non-dict: {type(response)}"
-                    )
-                    return None
-
-            except (ImportError, AttributeError):
-                logger.debug(f"MCP tool not found via import: {tool_name}")
-                return None
-
-        except Exception as e:
-            logger.debug(f"MCP call error for {tool_name}: {e}")
+        if self.mcp_tool_caller is None:
+            logger.error(
+                "QuantWheel MCP transport is not configured; provide an MCP tool caller"
+            )
             return None
 
+        try:
+            response = self.mcp_tool_caller(tool_name, params)
+            if isinstance(response, dict):
+                return response
+            logger.debug(f"MCP tool {tool_name} returned non-dict: {type(response)}")
+        except Exception as e:
+            logger.debug(f"MCP call error for {tool_name}: {e}")
         return None
 
     def get_gex(self, ticker: str, expiration: str) -> Optional[GEXData]:
         """Fetch GEX (gamma exposure) data for ticker + expiration."""
         cache_key = f"gex:{ticker}:{expiration}"
 
-        # Try cache first
-        cached = self.cache.get(cache_key)
+        cached = self._cache_get(cache_key)
         if cached is not None:
             return cached
 
@@ -128,10 +116,12 @@ class QuantWheelClient:
                 return None
 
             gex_data = GEXData(
-                net_gamma=data.get("net_gamma", 0.0),
+                net_gamma=data["net_gamma"],
                 gamma_buildup_pct=data.get("gamma_buildup_pct", 0.0),
+                put_wall=data.get("put_wall"),
+                call_wall=data.get("call_wall"),
             )
-            self.cache.set(cache_key, gex_data, self.cache_ttl_minutes)
+            self._cache_set(cache_key, gex_data)
             self.call_count += 1
             return gex_data
         except Exception as e:
@@ -143,7 +133,7 @@ class QuantWheelClient:
         cache_key = f"vanna:{ticker}"
 
         # Try cache first
-        cached = self.cache.get(cache_key)
+        cached = self._cache_get(cache_key)
         if cached is not None:
             return cached
 
@@ -158,35 +148,46 @@ class QuantWheelClient:
                 bull_bear_ratio=data.get("bull_bear_ratio", 0.0),
                 bullish_target=data.get("bullish_target", 0.0),
             )
-            self.cache.set(cache_key, vanna_data, self.cache_ttl_minutes)
+            self._cache_set(cache_key, vanna_data)
             self.call_count += 1
             return vanna_data
         except Exception as e:
             print(f"⚠️  Vanna fetch failed for {ticker}: {e}")
             return None
 
-    def get_quote(self, ticker: str) -> Optional[tuple[float, float]]:
-        """Fetch current price and IV. Returns (price, iv) or None."""
+    def get_quote_data(self, ticker: str) -> Optional[Dict[str, Optional[float]]]:
+        """Fetch price, IV, and historical IV averages when provided."""
         cache_key = f"quote:{ticker}"
 
-        # Try cache first
-        cached = self.cache.get(cache_key)
+        cached = self._cache_get(cache_key)
         if cached is not None:
             return cached
 
-        # Fetch from QuantWheel
         try:
             data = self._fetch_quote_from_qw(ticker)
             if data is None:
                 return None
 
-            quote = (data.get("price", 0.0), data.get("iv", 0.0))
-            self.cache.set(cache_key, quote, self.cache_ttl_minutes)
+            self._cache_set(cache_key, data)
             self.call_count += 1
-            return quote
+            return data
         except Exception as e:
             print(f"⚠️  Quote fetch failed for {ticker}: {e}")
             return None
+
+    def get_quote(self, ticker: str) -> Optional[tuple[float, Optional[float]]]:
+        """Fetch current price and IV. Missing IV remains None."""
+        data = self.get_quote_data(ticker)
+        if data is None:
+            return None
+        return data["price"], data["iv"]
+
+    def _cache_get(self, key: str) -> Optional[Any]:
+        return None if self.no_cache else self.cache.get(key)
+
+    def _cache_set(self, key: str, value: Any):
+        if not self.no_cache:
+            self.cache.set(key, value, self.cache_ttl_minutes)
 
     def get_all_tickers(self):
         """Return list of all tickers (SPX 500 + NDX 100)."""
@@ -199,6 +200,26 @@ class QuantWheelClient:
             "cache_entries": stats["total"],
             "valid_entries": stats["valid"],
             "total_api_calls": self.call_count,
+            "hits": self.cache.hits,
+            "misses": self.cache.misses,
+            "cache_hit_rate": (
+                self.cache.hits / (self.cache.hits + self.cache.misses)
+                if self.cache.hits + self.cache.misses
+                else 0.0
+            ),
+            "oldest_cache_age_minutes": max(
+                (
+                    max(
+                        0,
+                        time.time()
+                        - (expiry - self.cache_ttl_minutes * 60),
+                    )
+                    / 60
+                    for _, expiry in self.cache._cache.values()
+                    if time.time() <= expiry
+                ),
+                default=0,
+            ),
         }
 
     # Private methods (MCP tool integration)
@@ -206,7 +227,7 @@ class QuantWheelClient:
     def _fetch_gex_from_qw(self, ticker: str, expiration: str) -> Optional[Dict]:
         """
         Call QuantWheel MCP get_gex tool.
-        Returns: {"net_gamma": float, "gamma_buildup_pct": float} or None on error.
+        Returns gamma values and optional walls, or None on error.
         """
         for attempt in range(config.QW_MAX_RETRIES):
             try:
@@ -237,6 +258,8 @@ class QuantWheelClient:
                 gamma_buildup_pct = response.get(
                     "gammaBuildup", response.get("gamma_buildup_pct", 0.0)
                 )
+                put_wall = response.get("putWall", response.get("put_wall"))
+                call_wall = response.get("callWall", response.get("call_wall"))
 
                 if net_gamma is None:
                     logger.debug(f"Missing netGamma in GEX response for {ticker}")
@@ -250,6 +273,8 @@ class QuantWheelClient:
                     "gamma_buildup_pct": (
                         float(gamma_buildup_pct) if gamma_buildup_pct else 0.0
                     ),
+                    "put_wall": float(put_wall) if put_wall is not None else None,
+                    "call_wall": float(call_wall) if call_wall is not None else None,
                 }
 
             except TimeoutError:
@@ -346,8 +371,7 @@ class QuantWheelClient:
     def _fetch_quote_from_qw(self, ticker: str) -> Optional[Dict]:
         """
         Call QuantWheel MCP get_stock_quote tool.
-        Returns: {"price": float, "iv": float} or None on error.
-        Note: This returns price only; IV from stock quote may be 0.
+        Returns the available price/IV fields; missing IV values remain None.
         """
         for attempt in range(config.QW_MAX_RETRIES):
             try:
@@ -382,12 +406,23 @@ class QuantWheelClient:
                         continue
                     return None
 
-                # IV is typically not in stock quote response; stock quote only has price
-                iv = response.get("iv", 0.0)
+                iv = response.get("iv", response.get("impliedVolatility"))
+                iv_3day_avg = response.get(
+                    "iv_3day_avg", response.get("iv3DayAvg")
+                )
+                iv_5day_avg = response.get(
+                    "iv_5day_avg", response.get("iv5DayAvg")
+                )
 
                 return {
                     "price": float(price),
-                    "iv": float(iv) if iv else 0.0,
+                    "iv": float(iv) if iv is not None else None,
+                    "iv_3day_avg": (
+                        float(iv_3day_avg) if iv_3day_avg is not None else None
+                    ),
+                    "iv_5day_avg": (
+                        float(iv_5day_avg) if iv_5day_avg is not None else None
+                    ),
                 }
 
             except TimeoutError:
