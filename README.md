@@ -40,3 +40,6 @@ npm install
 npm test
 npm run typecheck
 ```
+
+The separate Python market-regime screener documentation is in [USAGE.md](USAGE.md)
+and [Architecture.md](Architecture.md). It is not part of this FMP MCP package.
