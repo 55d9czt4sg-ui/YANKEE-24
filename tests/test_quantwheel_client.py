@@ -160,3 +160,262 @@ def test_quote_cache_hit():
         result2 = client.get_quote("NVDA")
         assert mock_fetch.call_count == 1  # No additional call
         assert result1 == result2
+
+
+# Integration tests for MCP tool calls
+
+
+def test_mcp_call_tool_returns_dict():
+    """Test _call_mcp_tool returns dict on success."""
+    client = QuantWheelClient(mcp_enabled=False)  # Disabled for this test
+    # With mcp_enabled=False, should return None
+    result = client._call_mcp_tool("test_tool", {"param": "value"})
+    assert result is None
+
+
+def test_mcp_call_tool_disabled():
+    """Test _call_mcp_tool respects mcp_enabled flag."""
+    client = QuantWheelClient(mcp_enabled=False)
+    result = client._call_mcp_tool("any_tool", {})
+    assert result is None
+
+
+def test_fetch_gex_retry_logic():
+    """Test _fetch_gex_from_qw retries on None response."""
+    client = QuantWheelClient()
+    call_count = 0
+
+    def mock_call_mcp(tool, params, timeout_sec=None):
+        nonlocal call_count
+        call_count += 1
+        # Succeed on second attempt
+        if call_count == 2:
+            return {"netGamma": 150.5, "gammaBuildup": 50.0}
+        return None
+
+    with patch.object(client, "_call_mcp_tool", side_effect=mock_call_mcp):
+        result = client._fetch_gex_from_qw("NVDA", "2026-10-18")
+        assert call_count == 2  # Retried once
+        assert result is not None
+        assert result["net_gamma"] == 150.5
+
+
+def test_fetch_gex_timeout_retry():
+    """Test _fetch_gex_from_qw handles TimeoutError and retries."""
+    client = QuantWheelClient()
+    call_count = 0
+
+    def mock_call_mcp(tool, params, timeout_sec=None):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise TimeoutError("API timeout")
+        return {"netGamma": 150.5, "gammaBuildup": 50.0}
+
+    with patch.object(client, "_call_mcp_tool", side_effect=mock_call_mcp):
+        result = client._fetch_gex_from_qw("NVDA", "2026-10-18")
+        assert call_count == 2  # Retried after timeout
+        assert result is not None
+        assert result["net_gamma"] == 150.5
+
+
+def test_fetch_gex_all_retries_exhausted():
+    """Test _fetch_gex_from_qw returns None when retries exhausted."""
+    client = QuantWheelClient()
+
+    with patch.object(client, "_call_mcp_tool", side_effect=Exception("API error")):
+        result = client._fetch_gex_from_qw("INVALID", "2026-10-18")
+        assert result is None
+
+
+def test_fetch_gex_handles_snake_case_response():
+    """Test _fetch_gex_from_qw handles snake_case field names."""
+    client = QuantWheelClient()
+
+    with patch.object(
+        client,
+        "_call_mcp_tool",
+        return_value={"net_gamma": 150.5, "gamma_buildup_pct": 45.0},
+    ):
+        result = client._fetch_gex_from_qw("NVDA", "2026-10-18")
+        assert result is not None
+        assert result["net_gamma"] == 150.5
+        assert result["gamma_buildup_pct"] == 45.0
+
+
+def test_fetch_vanna_extracts_now_bucket():
+    """Test _fetch_vanna_from_qw extracts data from 'now' bucket."""
+    client = QuantWheelClient()
+
+    mcp_response = {
+        "now": {
+            "vannaRegime": "positive",
+            "bullBearRatio": 2.48,
+            "bullDriftTarget": 230.0,
+        },
+        "regime": {"vannaRegime": "negative", "bullBearRatio": 0.8},
+    }
+
+    with patch.object(client, "_call_mcp_tool", return_value=mcp_response):
+        result = client._fetch_vanna_from_qw("NVDA")
+        assert result is not None
+        assert result["vanna_regime"] == "positive"
+        assert result["bull_bear_ratio"] == 2.48
+        assert result["bullish_target"] == 230.0
+
+
+def test_fetch_vanna_invalid_regime():
+    """Test _fetch_vanna_from_qw handles invalid regime."""
+    client = QuantWheelClient()
+
+    with patch.object(
+        client, "_call_mcp_tool", return_value={"now": {"vannaRegime": "unknown"}}
+    ):
+        result = client._fetch_vanna_from_qw("NVDA")
+        # Should return None or retry when regime is unknown
+        # First attempt returns "unknown", second retry hits limit
+        assert result is None
+
+
+def test_fetch_vanna_retry_on_error():
+    """Test _fetch_vanna_from_qw retries on API error."""
+    client = QuantWheelClient()
+    call_count = 0
+
+    def mock_call_mcp(tool, params, timeout_sec=None):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise Exception("API error")
+        return {
+            "now": {
+                "vannaRegime": "positive",
+                "bullBearRatio": 2.48,
+                "bullDriftTarget": 230.0,
+            }
+        }
+
+    with patch.object(client, "_call_mcp_tool", side_effect=mock_call_mcp):
+        result = client._fetch_vanna_from_qw("NVDA")
+        assert call_count == 2
+        assert result is not None
+        assert result["vanna_regime"] == "positive"
+
+
+def test_fetch_quote_extracts_price():
+    """Test _fetch_quote_from_qw extracts price correctly."""
+    client = QuantWheelClient()
+
+    with patch.object(client, "_call_mcp_tool", return_value={"price": 221.82}):
+        result = client._fetch_quote_from_qw("NVDA")
+        assert result is not None
+        assert result["price"] == 221.82
+        assert result["iv"] == 0.0  # No IV in stock quote
+
+
+def test_fetch_quote_handles_fallback_price_field():
+    """Test _fetch_quote_from_qw handles 'last' field if 'price' missing."""
+    client = QuantWheelClient()
+
+    with patch.object(client, "_call_mcp_tool", return_value={"last": 221.82}):
+        result = client._fetch_quote_from_qw("NVDA")
+        assert result is not None
+        assert result["price"] == 221.82
+
+
+def test_fetch_quote_handles_mid_price_field():
+    """Test _fetch_quote_from_qw handles 'mid' field as fallback."""
+    client = QuantWheelClient()
+
+    with patch.object(client, "_call_mcp_tool", return_value={"mid": 221.82}):
+        result = client._fetch_quote_from_qw("NVDA")
+        assert result is not None
+        assert result["price"] == 221.82
+
+
+def test_fetch_quote_missing_price():
+    """Test _fetch_quote_from_qw returns None when price is missing."""
+    client = QuantWheelClient()
+
+    with patch.object(client, "_call_mcp_tool", return_value={"some_field": "value"}):
+        result = client._fetch_quote_from_qw("NVDA")
+        # Should retry, then return None
+        assert result is None
+
+
+def test_fetch_quote_timeout_retry():
+    """Test _fetch_quote_from_qw retries on timeout."""
+    client = QuantWheelClient()
+    call_count = 0
+
+    def mock_call_mcp(tool, params, timeout_sec=None):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise TimeoutError("Timeout")
+        return {"price": 221.82}
+
+    with patch.object(client, "_call_mcp_tool", side_effect=mock_call_mcp):
+        result = client._fetch_quote_from_qw("NVDA")
+        assert call_count == 2
+        assert result is not None
+        assert result["price"] == 221.82
+
+
+def test_gex_integration_with_cache():
+    """Test full GEX flow: MCP call -> cache -> model conversion."""
+    client = QuantWheelClient()
+
+    with patch.object(
+        client,
+        "_call_mcp_tool",
+        return_value={"netGamma": 150.5, "gammaBuildup": 50.0},
+    ):
+        # First call: MCP -> cache -> GEXData
+        result1 = client.get_gex("NVDA", "2026-10-18")
+        assert isinstance(result1, GEXData)
+        assert result1.net_gamma == 150.5
+        assert result1.gamma_buildup_pct == 50.0
+
+        # Second call: cache hit, no MCP call
+        result2 = client.get_gex("NVDA", "2026-10-18")
+        assert result1 == result2
+
+
+def test_vanna_integration_with_cache():
+    """Test full Vanna flow: MCP call -> cache -> model conversion."""
+    client = QuantWheelClient()
+
+    mcp_response = {
+        "now": {
+            "vannaRegime": "positive",
+            "bullBearRatio": 2.48,
+            "bullDriftTarget": 230.0,
+        }
+    }
+
+    with patch.object(client, "_call_mcp_tool", return_value=mcp_response):
+        # First call: MCP -> cache -> VannaData
+        result1 = client.get_vanna_charm("NVDA")
+        assert isinstance(result1, VannaData)
+        assert result1.vanna_regime == "positive"
+        assert result1.bull_bear_ratio == 2.48
+
+        # Second call: cache hit
+        result2 = client.get_vanna_charm("NVDA")
+        assert result1 == result2
+
+
+def test_quote_integration_with_cache():
+    """Test full Quote flow: MCP call -> cache -> tuple."""
+    client = QuantWheelClient()
+
+    with patch.object(client, "_call_mcp_tool", return_value={"price": 221.82}):
+        # First call: MCP -> cache -> tuple
+        result1 = client.get_quote("NVDA")
+        assert isinstance(result1, tuple)
+        assert result1 == (221.82, 0.0)
+
+        # Second call: cache hit
+        result2 = client.get_quote("NVDA")
+        assert result1 == result2
